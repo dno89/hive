@@ -14,7 +14,9 @@ dependencies:
   - protobuf
   - absl-py
   - abseil-cpp
-  - pytorch=2.2.*
-  - ray=2.10.*
   - pymunk
   - pygame
+  - pip
+  - pip:
+    - ray[rllib]==2.10.0
+    - torch

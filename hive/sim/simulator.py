@@ -12,37 +12,35 @@ import numpy as np
 from hive.utils.util import clamp
 
 
-class MotionAction(BaseModel):
-    """Action in the entity-local frame."""
-
-    longitudinal_accel: float = 0.0
-    lateral_accel: float = 0.0
-    angular_velocity: float = 0.0
-
-
-class MotionConfig(BaseModel):
-    """Per-entity motion limits in the local frame."""
-
-    min_longitudinal_accel: float = -4.0
-    max_longitudinal_accel: float = 4.0
-    min_lateral_accel: float = -4.0
-    max_lateral_accel: float = 4.0
-    max_speed: float = 20.0
-    min_angular_velocity: float = -10.0
-    max_angular_velocity: float = 10.0
-
-
-class MotionModel:
+class LatLonAccMotionModel:
     """Maps motion actions into pymunk force and velocity updates."""
 
-    def __init__(self, default_config: MotionConfig | None = None) -> None:
-        self.default_config = default_config or MotionConfig()
+    class Config(BaseModel):
+        """Per-entity motion limits in the local frame."""
+
+        min_longitudinal_accel: float = -4.0
+        max_longitudinal_accel: float = 4.0
+        min_lateral_accel: float = -4.0
+        max_lateral_accel: float = 4.0
+        max_speed: float = 20.0
+        min_angular_velocity: float = -10.0
+        max_angular_velocity: float = 10.0
+
+    class Action(BaseModel):
+        """Action in the entity-local frame."""
+
+        longitudinal_accel: float = 0.0
+        lateral_accel: float = 0.0
+        angular_velocity: float = 0.0
+
+    def __init__(self, default_config: Config | None = None) -> None:
+        self.default_config = default_config or self.Config()
 
     def apply_action(
         self,
         body: pymunk.Body,
-        action: MotionAction,
-        config: MotionConfig | None = None,
+        action: Action,
+        config: Config | None = None,
     ) -> None:
         cfg = config or self.default_config
 
@@ -79,7 +77,9 @@ class MotionModel:
             body.velocity = body.velocity * (cfg.max_speed / speed)
 
 
-Action = MotionAction
+MotionModel = LatLonAccMotionModel
+MotionAction = LatLonAccMotionModel.Action
+MotionConfig = LatLonAccMotionModel.Config
 
 
 class Simulator:

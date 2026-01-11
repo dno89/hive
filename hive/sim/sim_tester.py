@@ -128,9 +128,9 @@ def main() -> None:
             angular_speed += SIM_ANG_SPEED_VALUE
 
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            lateral_accel += SIM_ACCELERATION_VALUE
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
             lateral_accel -= SIM_ACCELERATION_VALUE
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            lateral_accel += SIM_ACCELERATION_VALUE
 
         events = sim.step(
             {

@@ -9,12 +9,21 @@ import pygame
 import pymunk
 from pymunk.pygame_util import DrawOptions
 
-from hive.sim.simulator import MotionAction, Simulator
+from hive.sim.simulator import MotionAction, Simulator, MotionConfig
 
 
-WINDOW_SIZE = (800, 600)
+WORLD_SIZE_M = (100.0, 200.0)
+PIXELS_PER_METER = 20.0
+WINDOW_SIZE = (1000, 600)
 BG_COLOR = (18, 20, 24)
 TEXT_COLOR = (240, 240, 240)
+
+SIM_ACCELERATION_VALUE = 4.0
+SIM_ANG_SPEED_VALUE = 2.5
+SIM_MAX_SPEED = 8.0
+ENTITY_RADIUS_M = 0.5
+TARGET_RADIUS_M = 0.5
+SPAWN_MARGIN_M = 5.0
 
 
 def _format_events(events: List[dict]) -> List[str]:
@@ -27,6 +36,25 @@ def _format_events(events: List[dict]) -> List[str]:
     return lines
 
 
+def _clamp(value: float, min_value: float, max_value: float) -> float:
+    return max(min_value, min(value, max_value))
+
+
+def _camera_transform(
+    target_pos: tuple[float, float],
+    world_size: tuple[float, float],
+    window_size: tuple[int, int],
+    pixels_per_meter: float,
+) -> pymunk.Transform:
+    view_w_m = window_size[0] / pixels_per_meter
+    view_h_m = window_size[1] / pixels_per_meter
+    cam_x = _clamp(target_pos[0], view_w_m / 2, world_size[0] - view_w_m / 2)
+    cam_y = _clamp(target_pos[1], view_h_m / 2, world_size[1] - view_h_m / 2)
+    tx = window_size[0] / 2 - pixels_per_meter * cam_x
+    ty = window_size[1] / 2 - pixels_per_meter * cam_y
+    return pymunk.Transform(pixels_per_meter, 0.0, 0.0, pixels_per_meter, tx, ty)
+
+
 def main() -> None:
     pygame.init()
     screen = pygame.display.set_mode(WINDOW_SIZE)
@@ -34,16 +62,19 @@ def main() -> None:
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Courier", 16)
 
-    sim = Simulator(dt=1.0 / 60.0)
+    sim = Simulator(dt=1.0 / 60.0, world_size=WORLD_SIZE_M)
     sim.add_entity(
-        "agent", position=(WINDOW_SIZE[0] / 2, WINDOW_SIZE[1] / 2), radius=18.0
+        "agent",
+        position=(WORLD_SIZE_M[0] / 2, WORLD_SIZE_M[1] / 2),
+        radius=ENTITY_RADIUS_M,
+        motion_config=MotionConfig(max_speed=SIM_MAX_SPEED),
     )
 
     target_pos = (
-        random.uniform(100, WINDOW_SIZE[0] - 100),
-        random.uniform(100, WINDOW_SIZE[1] - 100),
+        random.uniform(SPAWN_MARGIN_M, WORLD_SIZE_M[0] - SPAWN_MARGIN_M),
+        random.uniform(SPAWN_MARGIN_M, WORLD_SIZE_M[1] - SPAWN_MARGIN_M),
     )
-    sim.add_static_target("target", position=target_pos, radius=14.0)
+    sim.add_static_target("target", position=target_pos, radius=TARGET_RADIUS_M)
 
     draw_options = DrawOptions(screen)
 
@@ -59,17 +90,17 @@ def main() -> None:
         lateral_accel = 0.0
         angular_speed = 0.0
         if keys[pygame.K_UP] or keys[pygame.K_w]:
-            longitudinal_accel += 200.0
+            longitudinal_accel += SIM_ACCELERATION_VALUE
         if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            longitudinal_accel -= 200.0
+            longitudinal_accel -= SIM_ACCELERATION_VALUE
         if keys[pygame.K_q]:
-            lateral_accel += 200.0
+            lateral_accel += SIM_ACCELERATION_VALUE
         if keys[pygame.K_e]:
-            lateral_accel -= 200.0
+            lateral_accel -= SIM_ACCELERATION_VALUE
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            angular_speed += 3.5
+            angular_speed -= SIM_ANG_SPEED_VALUE
         if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            angular_speed -= 3.5
+            angular_speed += SIM_ANG_SPEED_VALUE
 
         events = sim.step(
             {
@@ -81,6 +112,13 @@ def main() -> None:
             }
         )
         last_events = _format_events(events) if events else last_events
+        agent_state = sim.get_entity_state("agent")
+        draw_options.transform = _camera_transform(
+            agent_state["position"],
+            WORLD_SIZE_M,
+            WINDOW_SIZE,
+            PIXELS_PER_METER,
+        )
 
         screen.fill(BG_COLOR)
         sim.debug_draw(draw_options)

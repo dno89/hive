@@ -1,2 +1,2 @@
 ## Repository expectations
- - when you need to run terminal commands, make sure you activate the 'hive' conda environment first.
+- if you need to run a `python` command, make sure to activate the "hive" conda environment first.

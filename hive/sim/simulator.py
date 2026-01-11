@@ -85,10 +85,18 @@ Action = MotionAction
 class Simulator:
     """Simulator with circular entities and targets."""
 
-    def __init__(self, dt: float = 0.02, motion_model: MotionModel | None = None):
+    def __init__(
+        self,
+        dt: float = 0.02,
+        motion_model: MotionModel | None = None,
+        world_size: Tuple[float, float] = (100.0, 200.0),
+        wall_thickness: float = 1.0,
+    ):
         self.dt = dt
         self.space = pymunk.Space()
         self.space.gravity = (0.0, 0.0)
+        self.world_size = world_size
+        self.wall_thickness = wall_thickness
         self._entities: Dict[str, Dict[str, Any]] = {}
         self._dynamic_targets: Dict[str, Dict[str, Any]] = {}
         self._static_targets: Dict[str, Dict[str, Any]] = {}
@@ -98,6 +106,7 @@ class Simulator:
         self._id_to_kind: Dict[str, str] = {}
         self._events: List[Dict[str, Any]] = []
 
+        self._add_bounds()
         self.space.on_collision(begin=self._on_collision_begin)
 
     def add_entity(
@@ -212,6 +221,21 @@ class Simulator:
         shape = pymunk.Circle(body, radius)
         self.space.add(body, shape)
         return body, shape
+
+    def _add_bounds(self) -> None:
+        width, height = self.world_size
+        thickness = self.wall_thickness
+        static_body = self.space.static_body
+        segments = [
+            pymunk.Segment(static_body, (0.0, 0.0), (width, 0.0), thickness),
+            pymunk.Segment(static_body, (width, 0.0), (width, height), thickness),
+            pymunk.Segment(static_body, (width, height), (0.0, height), thickness),
+            pymunk.Segment(static_body, (0.0, height), (0.0, 0.0), thickness),
+        ]
+        for idx, segment in enumerate(segments):
+            segment.elasticity = 1.0
+            self.space.add(segment)
+            self._register_shape(f"boundary_{idx}", segment, kind="boundary")
 
     def _register_shape(self, entity_id: str, shape: pymunk.Shape, kind: str) -> None:
         self._shape_to_id[shape] = entity_id

@@ -7,6 +7,9 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import pymunk
 from pydantic import BaseModel
+import numpy as np
+
+from hive.utils.util import clamp
 
 
 class MotionAction(BaseModel):
@@ -20,14 +23,11 @@ class MotionAction(BaseModel):
 class MotionConfig(BaseModel):
     """Per-entity motion limits in the local frame."""
 
-    min_longitudinal_accel: float = -1000.0
-    max_longitudinal_accel: float = 1000.0
-    min_lateral_accel: float = -1000.0
-    max_lateral_accel: float = 1000.0
-    min_longitudinal_speed: float = -500.0
-    max_longitudinal_speed: float = 500.0
-    min_lateral_speed: float = -500.0
-    max_lateral_speed: float = 500.0
+    min_longitudinal_accel: float = -4.0
+    max_longitudinal_accel: float = 4.0
+    min_lateral_accel: float = -4.0
+    max_lateral_accel: float = 4.0
+    max_speed: float = 20.0
     min_angular_velocity: float = -10.0
     max_angular_velocity: float = 10.0
 
@@ -45,43 +45,41 @@ class MotionModel:
         config: MotionConfig | None = None,
     ) -> None:
         cfg = config or self.default_config
-        act = action
-
-        lon_accel = _clamp(
-            act.longitudinal_accel,
-            cfg.min_longitudinal_accel,
-            cfg.max_longitudinal_accel,
-        )
-        lat_accel = _clamp(
-            act.lateral_accel, cfg.min_lateral_accel, cfg.max_lateral_accel
-        )
-        ang_vel = _clamp(
-            act.angular_velocity, cfg.min_angular_velocity, cfg.max_angular_velocity
-        )
 
         cos_heading = math.cos(body.angle)
         sin_heading = math.sin(body.angle)
-        fx = (cos_heading * lon_accel - sin_heading * lat_accel) * body.mass
-        fy = (sin_heading * lon_accel + cos_heading * lat_accel) * body.mass
-        body.apply_force_at_world_point((fx, fy), body.position)
+
+        # Acceleration in body (b) coordinates
+        a_x_b = clamp(
+            action.longitudinal_accel,
+            cfg.min_longitudinal_accel,
+            cfg.max_longitudinal_accel,
+        )
+        a_y_b = clamp(
+            action.lateral_accel, cfg.min_lateral_accel, cfg.max_lateral_accel
+        )
+        # Acceleration in world (w) coordinates
+        a_x_w = a_x_b * cos_heading - a_y_b * sin_heading
+        a_y_w = a_x_b * sin_heading + a_y_b * cos_heading
+
+        # Forces
+        f_x_w = a_x_w * body.mass
+        f_y_w = a_y_w * body.mass
+        body.apply_force_at_world_point((f_x_w, f_y_w), body.position)
+
+        # Angular velocity (Z-axis) is the same in body and world coordinates.
+        ang_vel = clamp(
+            action.angular_velocity, cfg.min_angular_velocity, cfg.max_angular_velocity
+        )
         body.angular_velocity = ang_vel
 
-        local_long = cos_heading * body.velocity.x + sin_heading * body.velocity.y
-        local_lat = -sin_heading * body.velocity.x + cos_heading * body.velocity.y
-        local_long = _clamp(
-            local_long, cfg.min_longitudinal_speed, cfg.max_longitudinal_speed
-        )
-        local_lat = _clamp(local_lat, cfg.min_lateral_speed, cfg.max_lateral_speed)
-        world_vx = cos_heading * local_long - sin_heading * local_lat
-        world_vy = sin_heading * local_long + cos_heading * local_lat
-        body.velocity = (world_vx, world_vy)
+        # Limit the speed
+        speed = body.velocity.length
+        if speed > config.max_speed:
+            body.velocity = body.velocity * (config.max_speed / speed)
 
 
 Action = MotionAction
-
-
-def _clamp(value: float, min_value: float, max_value: float) -> float:
-    return max(min_value, min(value, max_value))
 
 
 class Simulator:
@@ -100,11 +98,7 @@ class Simulator:
         self._id_to_kind: Dict[str, str] = {}
         self._events: List[Dict[str, Any]] = []
 
-        if hasattr(self.space, "add_default_collision_handler"):
-            handler = self.space.add_default_collision_handler()
-            handler.begin = self._on_collision_begin
-        else:
-            self.space.on_collision(begin=self._on_collision_begin)
+        self.space.on_collision(begin=self._on_collision_begin)
 
     def add_entity(
         self,
@@ -140,7 +134,7 @@ class Simulator:
         self,
         target_id: str,
         position: Tuple[float, float],
-        radius: float = 10.0,
+        radius: float = 1.0,
         mass: float = 1.0,
         heading: float = 0.0,
         motion_config: MotionConfig | None = None,

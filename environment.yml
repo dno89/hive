@@ -1,0 +1,18 @@
+name: hive
+channels:
+  - defaults
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy>=2.0.0
+  - gymnasium>=0.30.0
+  - pytorch>=2.1.0
+  - pip
+  - jupyterlab
+  - ipykernel
+  - pydantic
+  - pip:
+      - ray[rllib]>=2.6.0
+      - pymunk
+      - pygame

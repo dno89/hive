@@ -1,0 +1,9 @@
+[project]
+name = "hive"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Daniele Molinari MBA",email = "daniele.molinari6@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11"

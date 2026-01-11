@@ -75,8 +75,8 @@ class MotionModel:
 
         # Limit the speed
         speed = body.velocity.length
-        if speed > config.max_speed:
-            body.velocity = body.velocity * (config.max_speed / speed)
+        if speed > cfg.max_speed:
+            body.velocity = body.velocity * (cfg.max_speed / speed)
 
 
 Action = MotionAction

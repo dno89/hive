@@ -17,13 +17,16 @@ PIXELS_PER_METER = 20.0
 WINDOW_SIZE = (1000, 600)
 BG_COLOR = (18, 20, 24)
 TEXT_COLOR = (240, 240, 240)
+GRID_COLOR = (70, 75, 82)
 
-SIM_ACCELERATION_VALUE = 4.0
+SIM_ACCELERATION_VALUE = 6.0
 SIM_ANG_SPEED_VALUE = 2.5
-SIM_MAX_SPEED = 8.0
+SIM_MAX_SPEED = 20.0
 ENTITY_RADIUS_M = 0.5
 TARGET_RADIUS_M = 0.5
 SPAWN_MARGIN_M = 5.0
+GRID_SPACING_M = 5.0
+GRID_LINE_WIDTH = 1
 
 
 def _format_events(events: List[dict]) -> List[str]:
@@ -55,6 +58,31 @@ def _camera_transform(
     return pymunk.Transform(pixels_per_meter, 0.0, 0.0, pixels_per_meter, tx, ty)
 
 
+def _draw_grid(
+    surface: pygame.Surface,
+    camera_transform: pymunk.Transform,
+    world_size: tuple[float, float],
+    spacing_m: float,
+    line_width: int,
+) -> None:
+    if spacing_m <= 0.0:
+        return
+    step = spacing_m
+    width_m, height_m = world_size
+    x = 0.0
+    while x <= width_m:
+        start = camera_transform @ (x, 0.0)
+        end = camera_transform @ (x, height_m)
+        pygame.draw.line(surface, GRID_COLOR, start, end, line_width)
+        x += step
+    y = 0.0
+    while y <= height_m:
+        start = camera_transform @ (0.0, y)
+        end = camera_transform @ (width_m, y)
+        pygame.draw.line(surface, GRID_COLOR, start, end, line_width)
+        y += step
+
+
 def main() -> None:
     pygame.init()
     screen = pygame.display.set_mode(WINDOW_SIZE)
@@ -62,7 +90,7 @@ def main() -> None:
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Courier", 16)
 
-    sim = Simulator(dt=1.0 / 60.0, world_size=WORLD_SIZE_M)
+    sim = Simulator(dt=1.0 / 60.0, world_size=WORLD_SIZE_M, linear_damping=2.0)
     sim.add_entity(
         "agent",
         position=(WORLD_SIZE_M[0] / 2, WORLD_SIZE_M[1] / 2),
@@ -93,14 +121,16 @@ def main() -> None:
             longitudinal_accel += SIM_ACCELERATION_VALUE
         if keys[pygame.K_DOWN] or keys[pygame.K_s]:
             longitudinal_accel -= SIM_ACCELERATION_VALUE
+
         if keys[pygame.K_q]:
-            lateral_accel += SIM_ACCELERATION_VALUE
-        if keys[pygame.K_e]:
-            lateral_accel -= SIM_ACCELERATION_VALUE
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
             angular_speed -= SIM_ANG_SPEED_VALUE
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+        if keys[pygame.K_e]:
             angular_speed += SIM_ANG_SPEED_VALUE
+
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+            lateral_accel += SIM_ACCELERATION_VALUE
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            lateral_accel -= SIM_ACCELERATION_VALUE
 
         events = sim.step(
             {
@@ -121,6 +151,13 @@ def main() -> None:
         )
 
         screen.fill(BG_COLOR)
+        _draw_grid(
+            screen,
+            draw_options.transform,
+            WORLD_SIZE_M,
+            GRID_SPACING_M,
+            GRID_LINE_WIDTH,
+        )
         sim.debug_draw(draw_options)
 
         info_lines = [

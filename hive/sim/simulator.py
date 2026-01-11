@@ -91,12 +91,16 @@ class Simulator:
         motion_model: MotionModel | None = None,
         world_size: Tuple[float, float] = (100.0, 200.0),
         wall_thickness: float = 1.0,
+        friction: float = 0.8,
+        linear_damping: float = 1.0,
     ):
         self.dt = dt
         self.space = pymunk.Space()
         self.space.gravity = (0.0, 0.0)
         self.world_size = world_size
         self.wall_thickness = wall_thickness
+        self.friction = friction
+        self.linear_damping = linear_damping
         self._entities: Dict[str, Dict[str, Any]] = {}
         self._dynamic_targets: Dict[str, Dict[str, Any]] = {}
         self._static_targets: Dict[str, Dict[str, Any]] = {}
@@ -120,6 +124,7 @@ class Simulator:
     ) -> None:
         """Add a dynamic entity controlled via actions."""
         body, shape = self._create_dynamic_circle(position, radius, mass, heading)
+        shape.friction = self.friction
         self._entities[entity_id] = {"body": body, "shape": shape}
         if motion_config is not None:
             self._motion_configs[entity_id] = motion_config
@@ -135,6 +140,7 @@ class Simulator:
         body = pymunk.Body(body_type=pymunk.Body.STATIC)
         body.position = position
         shape = pymunk.Circle(body, radius)
+        shape.friction = self.friction
         self.space.add(body, shape)
         self._static_targets[target_id] = {"body": body, "shape": shape}
         self._register_shape(target_id, shape, kind="static_target")
@@ -150,6 +156,7 @@ class Simulator:
     ) -> None:
         """Add a dynamic target that can be moved like an entity."""
         body, shape = self._create_dynamic_circle(position, radius, mass, heading)
+        shape.friction = self.friction
         self._dynamic_targets[target_id] = {"body": body, "shape": shape}
         if motion_config is not None:
             self._motion_configs[target_id] = motion_config
@@ -171,6 +178,8 @@ class Simulator:
             self.motion_model.apply_action(body, action, motion_config)
 
         self.space.step(step_dt)
+        if self.linear_damping > 0.0:
+            self._apply_linear_damping(step_dt)
         return list(self._events)
 
     def get_entity_state(self, entity_id: str) -> Dict[str, Any]:
@@ -234,12 +243,28 @@ class Simulator:
         ]
         for idx, segment in enumerate(segments):
             segment.elasticity = 1.0
+            segment.friction = self.friction
             self.space.add(segment)
             self._register_shape(f"boundary_{idx}", segment, kind="boundary")
 
     def _register_shape(self, entity_id: str, shape: pymunk.Shape, kind: str) -> None:
         self._shape_to_id[shape] = entity_id
         self._id_to_kind[entity_id] = kind
+
+    def _apply_linear_damping(self, dt: float) -> None:
+        damping = self.linear_damping
+        for entity_id in self._all_ids():
+            body = self._get_dynamic_body(entity_id)
+            if body is None:
+                continue
+            speed = body.velocity.length
+            if speed <= 0.0:
+                continue
+            new_speed = max(0.0, speed - damping * dt)
+            if new_speed == 0.0:
+                body.velocity = (0.0, 0.0)
+            else:
+                body.velocity = body.velocity * (new_speed / speed)
 
     def _all_ids(self) -> Iterable[str]:
         return (

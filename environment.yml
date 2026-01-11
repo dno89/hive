@@ -16,6 +16,7 @@ dependencies:
   - abseil-cpp
   - pymunk
   - pygame
+  - intel-openmp
   - pip
   - pip:
     - ray[rllib]==2.10.0

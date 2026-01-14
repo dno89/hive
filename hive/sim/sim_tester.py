@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from typing import List
 
@@ -18,6 +19,8 @@ WINDOW_SIZE = (1000, 600)
 BG_COLOR = (18, 20, 24)
 TEXT_COLOR = (240, 240, 240)
 GRID_COLOR = (70, 75, 82)
+RAY_COLOR = (120, 180, 255)
+HIT_COLOR = (255, 120, 120)
 
 SIM_ACCELERATION_VALUE = 6.0
 SIM_ANG_SPEED_VALUE = 2.5
@@ -27,15 +30,20 @@ TARGET_RADIUS_M = 0.5
 SPAWN_MARGIN_M = 5.0
 GRID_SPACING_M = 5.0
 GRID_LINE_WIDTH = 1
+OBS_NUM_RAYS = 24
+OBS_RAY_LENGTH_M = 12.0
+RAY_LINE_WIDTH = 1
+HIT_RADIUS_PX = 3
 
 
-def _format_events(events: List[dict]) -> List[str]:
+def _format_events(events: List[object]) -> List[str]:
     lines = []
     for event in events:
-        if event.get("type") == "collision":
-            lines.append(f"collision: {event.get('a')} <-> {event.get('b')}")
-        else:
-            lines.append(str(event))
+        event_type = getattr(event, "type", None)
+        if event_type == "collision":
+            lines.append(f"collision: {event.a} <-> {event.b}")
+            continue
+        lines.append(str(event))
     return lines
 
 
@@ -81,6 +89,35 @@ def _draw_grid(
         end = camera_transform @ (width_m, y)
         pygame.draw.line(surface, GRID_COLOR, start, end, line_width)
         y += step
+
+
+def _draw_rays(
+    surface: pygame.Surface,
+    camera_transform: pymunk.Transform,
+    origin: tuple[float, float],
+    heading: float,
+    ray_length: float,
+    distances: List[float],
+    hit_mask: List[bool],
+) -> None:
+    start_px = camera_transform @ origin
+    step = 2.0 * math.pi / max(1, len(distances))
+    for idx, distance in enumerate(distances):
+        angle = heading + step * idx
+        dir_x = math.cos(angle)
+        dir_y = math.sin(angle)
+        end = (origin[0] + dir_x * ray_length, origin[1] + dir_y * ray_length)
+        end_px = camera_transform @ end
+        pygame.draw.line(surface, RAY_COLOR, start_px, end_px, RAY_LINE_WIDTH)
+        if hit_mask[idx]:
+            hit = (origin[0] + dir_x * distance, origin[1] + dir_y * distance)
+            hit_px = camera_transform @ hit
+            pygame.draw.circle(
+                surface,
+                HIT_COLOR,
+                (int(hit_px[0]), int(hit_px[1])),
+                HIT_RADIUS_PX,
+            )
 
 
 def main() -> None:
@@ -143,8 +180,11 @@ def main() -> None:
         )
         last_events = _format_events(events) if events else last_events
         agent_state = sim.get_entity_state("agent")
+        observation = sim.get_observation(
+            "agent", num_rays=OBS_NUM_RAYS, ray_length=OBS_RAY_LENGTH_M
+        )
         draw_options.transform = _camera_transform(
-            agent_state["position"],
+            agent_state.position,
             WORLD_SIZE_M,
             WINDOW_SIZE,
             PIXELS_PER_METER,
@@ -159,6 +199,15 @@ def main() -> None:
             GRID_LINE_WIDTH,
         )
         sim.debug_draw(draw_options)
+        _draw_rays(
+            screen,
+            draw_options.transform,
+            agent_state.position,
+            agent_state.heading,
+            OBS_RAY_LENGTH_M,
+            [ray.distance for ray in observation.rays],
+            [ray.hit_id is not None for ray in observation.rays],
+        )
 
         info_lines = [
             "Controls: WASD/arrows + Q/E strafe",

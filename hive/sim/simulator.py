@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from enum import Enum
 from typing import Any, Dict, Iterable, List, Tuple
 
 import pymunk
@@ -77,6 +78,47 @@ class LatLonAccMotionModel:
             body.velocity = body.velocity * (cfg.max_speed / speed)
 
 
+class EntityKind(str, Enum):
+    WALL = "wall"
+    TARGET = "target"
+    ENTITY = "entity"
+
+
+class EntityState(BaseModel):
+    """Snapshot of a single entity or target."""
+
+    id: str
+    kind: EntityKind
+    position: Tuple[float, float]
+    heading: float
+    velocity: Tuple[float, float]
+    angular_velocity: float
+
+
+class CollisionEvent(BaseModel):
+    """Collision event between two shapes."""
+
+    type: str = "collision"
+    a: str
+    b: str
+    points: List[Tuple[float, float]]
+
+
+class RayObservation(BaseModel):
+    """Single ray observation result."""
+
+    distance: float
+    hit_id: str | None = None
+    hit_kind: EntityKind | None = None
+
+
+class EntityObservation(BaseModel):
+    """Ray-based observation for an entity."""
+
+    entity_id: str
+    rays: List[RayObservation]
+
+
 MotionModel = LatLonAccMotionModel
 MotionAction = LatLonAccMotionModel.Action
 MotionConfig = LatLonAccMotionModel.Config
@@ -107,8 +149,8 @@ class Simulator:
         self._motion_configs: Dict[str, MotionConfig] = {}
         self.motion_model = motion_model or MotionModel()
         self._shape_to_id: Dict[pymunk.Shape, str] = {}
-        self._id_to_kind: Dict[str, str] = {}
-        self._events: List[Dict[str, Any]] = []
+        self._id_to_kind: Dict[str, EntityKind] = {}
+        self._events: List[CollisionEvent] = []
 
         self._add_bounds()
         self.space.on_collision(begin=self._on_collision_begin)
@@ -128,7 +170,7 @@ class Simulator:
         self._entities[entity_id] = {"body": body, "shape": shape}
         if motion_config is not None:
             self._motion_configs[entity_id] = motion_config
-        self._register_shape(entity_id, shape, kind="entity")
+        self._register_shape(entity_id, shape, kind=EntityKind.ENTITY)
 
     def add_static_target(
         self,
@@ -143,7 +185,7 @@ class Simulator:
         shape.friction = self.friction
         self.space.add(body, shape)
         self._static_targets[target_id] = {"body": body, "shape": shape}
-        self._register_shape(target_id, shape, kind="static_target")
+        self._register_shape(target_id, shape, kind=EntityKind.TARGET)
 
     def add_dynamic_target(
         self,
@@ -160,11 +202,11 @@ class Simulator:
         self._dynamic_targets[target_id] = {"body": body, "shape": shape}
         if motion_config is not None:
             self._motion_configs[target_id] = motion_config
-        self._register_shape(target_id, shape, kind="dynamic_target")
+        self._register_shape(target_id, shape, kind=EntityKind.TARGET)
 
     def step(
         self, actions: Dict[str, MotionAction] | None = None, dt: float | None = None
-    ) -> List[Dict[str, Any]]:
+    ) -> List[CollisionEvent]:
         """Advance the simulation by one step and return collision events."""
         self._events = []
         actions = actions or {}
@@ -182,16 +224,16 @@ class Simulator:
             self._apply_linear_damping(step_dt)
         return list(self._events)
 
-    def get_entity_state(self, entity_id: str) -> Dict[str, Any]:
+    def get_entity_state(self, entity_id: str) -> EntityState:
         """Return state for a single entity or target."""
         body = self._get_body(entity_id)
         if body is None:
             raise KeyError(f"Unknown entity id: {entity_id}")
         return self._build_state(entity_id, body)
 
-    def get_states(self) -> Dict[str, Dict[str, Any]]:
+    def get_states(self) -> Dict[str, EntityState]:
         """Return state for all entities and targets."""
-        states: Dict[str, Dict[str, Any]] = {}
+        states: Dict[str, EntityState] = {}
         for entity_id in self._all_ids():
             body = self._get_body(entity_id)
             if body is None:
@@ -199,9 +241,28 @@ class Simulator:
             states[entity_id] = self._build_state(entity_id, body)
         return states
 
-    def get_events(self) -> List[Dict[str, Any]]:
+    def get_events(self) -> List[CollisionEvent]:
         """Return the most recent events list."""
         return list(self._events)
+
+    def get_observation(
+        self, entity_id: str, num_rays: int, ray_length: float
+    ) -> EntityObservation:
+        """Return a ray-based observation for a single entity."""
+        directions = self._ray_directions(num_rays)
+        return self._build_observation(entity_id, directions, ray_length)
+
+    def get_observations(
+        self, entity_ids: Iterable[str], num_rays: int, ray_length: float
+    ) -> Dict[str, EntityObservation]:
+        """Return ray-based observations for multiple entities."""
+        directions = self._ray_directions(num_rays)
+        observations: Dict[str, EntityObservation] = {}
+        for entity_id in entity_ids:
+            observations[entity_id] = self._build_observation(
+                entity_id, directions, ray_length
+            )
+        return observations
 
     def debug_dump(self) -> Dict[str, Any]:
         """Return a debug snapshot of the simulator's entities and targets."""
@@ -245,9 +306,11 @@ class Simulator:
             segment.elasticity = 1.0
             segment.friction = self.friction
             self.space.add(segment)
-            self._register_shape(f"boundary_{idx}", segment, kind="boundary")
+            self._register_shape(f"boundary_{idx}", segment, kind=EntityKind.WALL)
 
-    def _register_shape(self, entity_id: str, shape: pymunk.Shape, kind: str) -> None:
+    def _register_shape(
+        self, entity_id: str, shape: pymunk.Shape, kind: EntityKind
+    ) -> None:
         self._shape_to_id[shape] = entity_id
         self._id_to_kind[entity_id] = kind
 
@@ -289,16 +352,81 @@ class Simulator:
             return self._dynamic_targets[entity_id]["body"]
         return None
 
-    def _build_state(self, entity_id: str, body: pymunk.Body) -> Dict[str, Any]:
-        kind = self._id_to_kind.get(entity_id, "unknown")
-        return {
-            "id": entity_id,
-            "kind": kind,
-            "position": (float(body.position.x), float(body.position.y)),
-            "heading": float(body.angle),
-            "velocity": (float(body.velocity.x), float(body.velocity.y)),
-            "angular_velocity": float(body.angular_velocity),
-        }
+    def _build_state(self, entity_id: str, body: pymunk.Body) -> EntityState:
+        kind = self._id_to_kind.get(entity_id)
+        if kind is None:
+            raise KeyError(f"Unknown entity kind for id: {entity_id}")
+        return EntityState(
+            id=entity_id,
+            kind=kind,
+            position=(float(body.position.x), float(body.position.y)),
+            heading=float(body.angle),
+            velocity=(float(body.velocity.x), float(body.velocity.y)),
+            angular_velocity=float(body.angular_velocity),
+        )
+
+    def _ray_directions(self, num_rays: int) -> List[Tuple[float, float]]:
+        if num_rays <= 0:
+            raise ValueError("num_rays must be positive")
+        step = 2.0 * math.pi / num_rays
+        return [(math.cos(step * idx), math.sin(step * idx)) for idx in range(num_rays)]
+
+    def _build_observation(
+        self,
+        entity_id: str,
+        directions: List[Tuple[float, float]],
+        ray_length: float,
+    ) -> EntityObservation:
+        if ray_length <= 0.0:
+            raise ValueError("ray_length must be positive")
+        body = self._get_body(entity_id)
+        if body is None:
+            raise KeyError(f"Unknown entity id: {entity_id}")
+
+        origin = body.position
+        cos_heading = math.cos(body.angle)
+        sin_heading = math.sin(body.angle)
+
+        rays: List[RayObservation] = []
+        for dir_x_b, dir_y_b in directions:
+            dir_x_w = dir_x_b * cos_heading - dir_y_b * sin_heading
+            dir_y_w = dir_x_b * sin_heading + dir_y_b * cos_heading
+            end = (origin.x + dir_x_w * ray_length, origin.y + dir_y_w * ray_length)
+            hit = self._segment_query_first(
+                (origin.x, origin.y), end, ignore_id=entity_id
+            )
+            if hit is None:
+                rays.append(RayObservation(distance=ray_length))
+                continue
+            hit_id = self._shape_to_id.get(hit.shape, "unknown")
+            hit_kind = self._id_to_kind.get(hit_id)
+            rays.append(
+                RayObservation(
+                    distance=float(hit.alpha * ray_length),
+                    hit_id=hit_id,
+                    hit_kind=hit_kind,
+                )
+            )
+
+        return EntityObservation(entity_id=entity_id, rays=rays)
+
+    def _segment_query_first(
+        self,
+        start: Tuple[float, float],
+        end: Tuple[float, float],
+        ignore_id: str | None = None,
+    ) -> pymunk.SegmentQueryInfo | None:
+        hits = self.space.segment_query(start, end, 0.0, pymunk.ShapeFilter())
+        closest: pymunk.SegmentQueryInfo | None = None
+        closest_alpha = float("inf")
+        for hit in hits:
+            hit_id = self._shape_to_id.get(hit.shape)
+            if ignore_id is not None and hit_id == ignore_id:
+                continue
+            if hit.alpha < closest_alpha:
+                closest = hit
+                closest_alpha = hit.alpha
+        return closest
 
     def _on_collision_begin(
         self, arbiter: pymunk.Arbiter, _space: pymunk.Space, _data: dict
@@ -310,12 +438,5 @@ class Simulator:
             (float(point.point_a.x), float(point.point_a.y))
             for point in arbiter.contact_point_set.points
         ]
-        self._events.append(
-            {
-                "type": "collision",
-                "a": id_a,
-                "b": id_b,
-                "points": points,
-            }
-        )
+        self._events.append(CollisionEvent(a=id_a, b=id_b, points=points))
         return True

@@ -73,7 +73,7 @@ class CommunicatingAgentTorchModel(TorchModelV2, nn.Module):
         if messages_mask is None:
             valid_mask = msg_embeddings.abs().sum(dim=-1) > 0
         else:
-            valid_mask = messages_mask > 0.5
+            valid_mask = messages_mask.bool()
         attn_mask = ~valid_mask
 
         encoded_msgs = self._msg_encoder(msg_embeddings, src_key_padding_mask=attn_mask)
